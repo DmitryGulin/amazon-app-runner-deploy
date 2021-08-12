@@ -4,9 +4,9 @@
   "description": "Registers and deploys the application as AppRunner service.",
   "main": "index.js",
   "scripts": {
-    "lint": "eslint **.js",
-    "package": "ncc build index.js -o dist",
-    "test": "eslint **.js && jest --coverage"
+    "lint": "eslint ./src/*.js",
+    "package": "ncc build ./src/index.js -o dist",
+    "test": "npm run lint && jest --coverage"
   },
   "repository": {
     "type": "git",
