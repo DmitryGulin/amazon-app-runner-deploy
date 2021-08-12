@@ -2,10 +2,11 @@
   "name": "aws-actions-app-runner-deploy-service",
   "version": "1.4.7",
   "description": "Registers and deploys the application as AppRunner service.",
-  "main": "index.js",
+  "main": "./dist/index.js",
+  "type": "module",
   "scripts": {
     "lint": "eslint ./src/*.js",
-    "package": "ncc build ./src/index.js -o dist",
+    "package": "node ./esbuild.config.mjs",
     "test": "npm run lint && jest --coverage"
   },
   "repository": {
@@ -31,7 +32,7 @@
     "yaml": "^1.10.2"
   },
   "devDependencies": {
-    "@zeit/ncc": "^0.22.3",
+    "esbuild": "^0.12.19",
     "eslint": "^7.32.0",
     "jest": "^27.0.6"
   }
