@@ -50,10 +50,6 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
           
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v1        
-
       - name: Deploy to AppRunner
         id: deploy-apprunner
         uses: hariohmprasath/amazon-app-runner-deploy@master
@@ -122,6 +118,7 @@ jobs:
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           echo "::set-output name=image::$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"  
+          
       - name: Deploy to AppRunner Image
         id: deploy-apprunner
         uses: hariohmprasath/amazon-app-runner-deploy@master
