@@ -26,13 +26,13 @@
   },
   "homepage": "https://github.com/hariohmprasath/amazon-app-runner-deploy#readme",
   "dependencies": {
-    "@actions/core": "^1.4.0",
-    "@aws-sdk/client-apprunner": "^3.25.0",
+    "@actions/core": "^1.5.0",
+    "@aws-sdk/client-apprunner": "^3.27.0",
     "@aws-sdk/node-http-handler": "^3.25.0",
     "yaml": "^1.10.2"
   },
   "devDependencies": {
-    "esbuild": "^0.12.19",
+    "esbuild": "^0.12.22",
     "eslint": "^7.32.0",
     "jest": "^27.0.6"
   }
