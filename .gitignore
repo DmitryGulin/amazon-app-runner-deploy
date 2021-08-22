@@ -65,3 +65,7 @@ typings/
 
 # next.js build output
 .next
+
+#
+cloudformation.schema.json
+sam.schema.json
