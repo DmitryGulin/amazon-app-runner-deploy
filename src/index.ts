@@ -1,81 +1,106 @@
-const core = require('@actions/core');
-const {
-    AppRunnerClient,
-    CreateServiceCommand,
-    ListServicesCommand,
-    ImageRepositoryType,
-    UpdateServiceCommand,
-    DescribeServiceCommand
-} = require("@aws-sdk/client-apprunner");
 
-const NODEJS_12 = "NODEJS_12";
-const PYTHON_3 = "PYTHON_3";
+import { getInput } from "@actions/core";
+import { AppRunnerClient, CreateServiceCommand, ListServicesCommand, ListServicesCommandOutput, UpdateServiceCommand, DescribeServiceCommand, ImageRepositoryType } from "@aws-sdk/client-apprunner";
+
+const supportedRuntime = [ 'NODEJS_12', 'PYTHON_3' ];
+
 const OPERATION_IN_PROGRESS = "OPERATION_IN_PROGRESS";
 const MAX_ATTEMPTS = 120;
 
-function isEmptyValue(value) {
-    return value === null || value === undefined || value === '';
-}
-
 // Wait in milliseconds (helps to implement exponential retries)
-function sleep(ms) {
+function sleep(ms: number) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 // Determine ECR image repository type
-function getImageType(imageUri) {
+function getImageType(imageUri: string) {
     return imageUri.startsWith("public.ecr") ? ImageRepositoryType.ECR_PUBLIC : ImageRepositoryType.ECR
 }
 
-async function run() {
-    const serviceName = core.getInput('service', {required: true});
-    const sourceConnectionArn = core.getInput('source-connection-arn', {required: false});
-    const accessRoleArn = core.getInput('access-role-arn', {required: false});
-    const repoUrl = core.getInput('repo', {required: false});
-    const imageUri = core.getInput('image', {required: false});
-    const runtime = core.getInput('runtime', {required: true});
-    const buildCommand = core.getInput('build-command', {required: false});
-    const startCommand = core.getInput('start-command', {required: false});
-    const port = core.getInput('port', {required: false}) || 80;
-    const waitForService = core.getInput('wait-for-service-stability', {required: false}) || "false";
+function getInputInt(name: string, defaultValue: number): number {
+    const val = getInput(name, { required: false });
+    if(!val) {
+        return defaultValue;
+    }
+
+    const result = Number.parseInt(val);
+
+    return isNaN(result) ? defaultValue : result;
+}
+
+async function getServiceArn(client: AppRunnerClient, serviceName: string): Promise<string | undefined> {
+
+    let nextToken: string | undefined = undefined;
+
+    do {
+        const listServiceResponse: ListServicesCommandOutput = await client.send(
+            new ListServicesCommand({
+                NextToken: nextToken,
+            })
+        );
+        nextToken = listServiceResponse.NextToken;
+
+        if(!listServiceResponse.ServiceSummaryList) {
+            return undefined;
+        }
+
+        for (const service of listServiceResponse.ServiceSummaryList) {
+            if (service.ServiceName === serviceName) {
+                return service.ServiceArn
+            }
+        }
+    } while(nextToken)
+
+    return undefined;
+}
+
+export async function run(): Promise<void> {
+    const serviceName = getInput('service', {required: true});
+    const sourceConnectionArn = getInput('source-connection-arn', {required: false});
+    const accessRoleArn = getInput('access-role-arn', {required: false});
+    const repoUrl = getInput('repo', {required: false});
+    const imageUri = getInput('image', {required: false});
+    const runtime = getInput('runtime', {required: true});
+    const buildCommand = getInput('build-command', {required: false});
+    const startCommand = getInput('start-command', {required: false});
+    const port = getInputInt('port', 80);
+    const waitForService = getInput('wait-for-service-stability', {required: false}) || "false";
 
     try {
         // Check for service type
-        const isImageBased = !isEmptyValue(imageUri);
+        const isImageBased = !!imageUri;
 
         // Validations - AppRunner Service name
-        if (isEmptyValue(serviceName))
+        if (!serviceName)
             throw new Error('AppRunner service name cannot be empty');
 
         // Image URI required if the service is docker registry based
-        if (isImageBased && !isEmptyValue(repoUrl))
+        if (isImageBased && repoUrl)
             throw new Error('Either docker image registry or code repository expected, not both');
 
         // Mandatory check for source code based AppRunner
         if (!isImageBased) {
-            if (isEmptyValue(sourceConnectionArn) || isEmptyValue(repoUrl) || isEmptyValue(runtime)
-                || isEmptyValue(buildCommand)
-                || isEmptyValue(startCommand))
+            if (!sourceConnectionArn || !repoUrl || !runtime
+                || !buildCommand
+                || !startCommand)
                 throw new Error('Connection ARN, Repository URL, Runtime, build and start command are expected');
 
 
             // Runtime enum check
-            if (runtime !== NODEJS_12 && runtime !== PYTHON_3)
-                throw new Error(`Unexpected value passed in runtime ${runtime} only supported values are ${NODEJS_12} and ${PYTHON_3}`);
-        }else{
+            if (!supportedRuntime.includes(runtime))
+                throw new Error(`Unexpected value passed in runtime ${runtime} only supported values are: ${JSON.stringify(supportedRuntime)}`);
+        } else {
             // IAM Role check for ECR based AppRunner
-            if (isEmptyValue(accessRoleArn))
+            if (!accessRoleArn)
                 throw new Error(`Access role ARN is required for ECR based AppRunner`);
         }
 
         // Defaults
         // Region - us-east-1
-        let region = core.getInput('region', {required: false});
-        region = region ? region : 'us-east-1';
+        const region = getInput('region', {required: false}) || 'us-east-1';
 
         // Branch - master
-        let branch = core.getInput('branch', {required: false});
-        branch = branch ? branch : 'master';
+        let branch = getInput('branch', {required: false}) || 'master';
 
         // Get branch details from refs
         if (branch.startsWith("refs/")) {
@@ -83,47 +108,26 @@ async function run() {
         }
 
         // CPU - 1
-        let cpu = core.getInput('cpu', {required: false});
-        cpu = cpu ? cpu : 1;
+        const cpu = getInputInt('cpu', 1);
 
         // Memory - 3
-        let memory = core.getInput('memory', {required: false});
-        memory = memory ? memory : 3;
+        const memory = getInputInt('memory', 3);
 
         // AppRunner client
         const client = new AppRunnerClient({region: region});
 
         // Check whether service exists and get ServiceArn
-        let nextToken = null;
-        let serviceArn = null;
-        do {
-            const listServiceResponse = await client.send(
-                new ListServicesCommand({
-                    NextToken: nextToken
-                })
-            );
-
-            // Run through pagination and check for service name match
-            nextToken = listServiceResponse.NextToken;
-            for (const s in listServiceResponse.ServiceSummaryList) {
-                const service = listServiceResponse.ServiceSummaryList[s];
-                if (service.ServiceName === serviceName) {
-                    serviceArn = service.ServiceArn
-                    nextToken = null;
-                    break;
-                }
-            }
-        } while (!isEmptyValue(nextToken))
+        let serviceArn = await getServiceArn(client, serviceName);
 
         // New service or update to existing service
-        let serviceId = "";
-        if (isEmptyValue(serviceArn)) {
+        let serviceId: string | undefined = undefined;
+        if (!serviceArn) {
             core.info(`Creating service ${serviceName}`);
             const command = new CreateServiceCommand({
                 ServiceName: serviceName,
                 InstanceConfiguration: {
-                    CPU: cpu + " vCPU",
-                    Memory: memory + " GB"
+                    Cpu: `${cpu} vCPU`,
+                    Memory: `${memory} GB`,
                 },
                 SourceConfiguration: {}
             });
@@ -157,16 +161,16 @@ async function run() {
                                 Runtime: runtime,
                                 BuildCommand: buildCommand,
                                 StartCommand: startCommand,
-                                Port: port
+                                Port: `${port}`
                             }
                         }
                     }
                 };
             }
             const createServiceResponse = await client.send(command);
-            serviceId = createServiceResponse.Service.ServiceId;
+            serviceId = createServiceResponse.Service?.ServiceId;
             core.info(`Service creation initiated with service ID - ${serviceId}`)
-            serviceArn = createServiceResponse.Service.ServiceArn;
+            serviceArn = createServiceResponse.Service?.ServiceArn;
         } else {
             core.info(`Updating existing service ${serviceName}`);
             if (isImageBased) {
@@ -184,9 +188,9 @@ async function run() {
                     }
                 }));
 
-                serviceId = updateServiceResponse.Service.ServiceId;
+                serviceId = updateServiceResponse.Service?.ServiceId;
                 core.info(`Service update initiated with operation ID - ${serviceId}`);
-                serviceArn = updateServiceResponse.Service.ServiceArn;
+                serviceArn = updateServiceResponse.Service?.ServiceArn;
             }
         }
 
@@ -203,7 +207,7 @@ async function run() {
                     ServiceArn: serviceArn
                 }));
 
-                status = describeServiceResponse.Service.Status;
+                status = describeServiceResponse.Service?.Status ?? OPERATION_IN_PROGRESS;
                 if (status !== OPERATION_IN_PROGRESS)
                     break;
 
@@ -224,10 +228,4 @@ async function run() {
         core.setFailed(error.message);
         core.debug(error.stack);
     }
-}
-
-module.exports = run;
-
-if (require.main === module) {
-    run();
 }
