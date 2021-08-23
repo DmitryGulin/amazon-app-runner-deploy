@@ -228,3 +228,11 @@ export async function run(): Promise<void> {
         debug(error.stack);
     }
 }
+
+if (require.main === module) {
+    run().then(() => {
+        info('App Runner step - DONE!');
+    }).catch(err => {
+        setFailed(`App Runner unhandled exception: ${err.message}`);
+    });
+}
