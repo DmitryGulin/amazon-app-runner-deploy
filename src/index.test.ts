@@ -1,15 +1,6 @@
-///<reference path="../../Library/Caches/JetBrains/WebStorm2021.1/javascript/typings/jest/27.0.0/node_modules/@types/jest/index.d.ts"/>
-const run = require('.');
-const core = require('@actions/core');
-const fs = require('fs');
-const path = require('path');
-const {ImageRepositoryType, UpdateServiceCommand, DescribeServiceCommand} = require("@aws-sdk/client-apprunner");
 
 jest.mock('@actions/core');
-jest.mock('fs');
 
-const mockSendDef = jest.fn();
-const mockListDef = jest.fn();
 const SERVICE_ID = "serviceId";
 const SERVICE_NAME = "serviceName";
 const SERVICE_ARN = "serviceArn";
@@ -22,290 +13,310 @@ const BUILD_COMMAND = "build-command";
 const START_COMMAND = "start-command";
 const PORT = "80";
 
+const mockSendDef = jest.fn();
 jest.mock('@aws-sdk/client-apprunner', () => {
+    const appRunnerClient = {
+        send: mockSendDef,
+    }
     return {
-        config: {
-            region: 'fake-region'
-        },
-        AppRunnerClient: jest.fn(() => ({
-            send: mockSendDef
-        })),
-        ListServicesCommand: jest.fn(),
-        CreateServiceCommand: jest.fn(() => {
-            return {
-                input: {}
-            }
-        }),
-        UpdateServiceCommand: jest.fn(),
-        DescribeServiceCommand: jest.fn(),
-        ImageRepositoryType: {
-            ECR: "ECR",
-            ECR_PUBLIC: "ECR_PUBLIC",
-        }
-    };
+        ...jest.requireActual('@aws-sdk/client-apprunner'),
+        AppRunnerClient: jest.fn(() => appRunnerClient),
+    }
 });
+
+import { mocked } from 'ts-jest/utils';
+import { getInput, info, setFailed, setOutput } from '@actions/core';
+import { run } from '.';
+import { FakeInput, getFakeInput } from './test-helpers/fake-input';
+import { CommandLog, getFakeCommandOutput, ICommandConfig } from './test-helpers/app-runner-commands';
+
 
 describe('Deploy to AppRunner', () => {
 
+    const getInputMock = mocked(getInput);
+    const setFailedMock = mocked(setFailed);
+    const setOutputMock = mocked(setOutput);
+    const infoMock = mocked(info);
+
+    const commandLog = new CommandLog();
+
     beforeEach(() => {
-        jest.clearAllMocks();
-        process.env = Object.assign(process.env, {GITHUB_WORKSPACE: __dirname});
+        commandLog.reset();
     });
 
     test('register app runner with source code configuration', async () => {
-        core.getInput = jest
-            .fn()
-            .mockReturnValueOnce(SERVICE_NAME)
-            .mockReturnValueOnce(SOURCE_ARN_CONNECTION)
-            .mockReturnValueOnce(ACCESS_ROLE_ARN)
-            .mockReturnValueOnce(REPO)
-            .mockReturnValueOnce(null)
-            .mockReturnValueOnce(RUNTIME)
-            .mockReturnValueOnce(BUILD_COMMAND)
-            .mockReturnValueOnce(START_COMMAND)
-            .mockReturnValueOnce(PORT)
-            .mockReturnValueOnce('false');
-        mockSendDef.mockImplementationOnce(() => {
-            return {
-                NextToken: null
-            }
+        const inputConfig: FakeInput = {
+            service: SERVICE_NAME,
+            "source-connection-arn": SOURCE_ARN_CONNECTION,
+            "access-role-arn": ACCESS_ROLE_ARN,
+            repo: REPO,
+            runtime: RUNTIME,
+            "build-command": BUILD_COMMAND,
+            "start-command": START_COMMAND,
+            port: PORT,
+            "wait-for-service-stability": 'false',
+        };
+
+        getInputMock.mockImplementation((name) => {
+            return getFakeInput(inputConfig, name);
         });
-        mockSendDef.mockImplementationOnce(() => {
-            return {
-                Service: {
-                    ServiceId: SERVICE_ID
-                }
-            }
+
+        const sendConfig: ICommandConfig = {
+            listServicesCommand: [{ NextToken: undefined, ServiceSummaryList: [] }],
+            createServiceCommand: [{ Service: { ServiceId: SERVICE_ID } }],
+        }
+        mockSendDef.mockImplementation((command) => {
+            return getFakeCommandOutput(sendConfig, command.input, commandLog);
         });
+
         await run();
-        expect(core.setFailed).toHaveBeenCalledTimes(0);
-        expect(core.setOutput).toHaveBeenNthCalledWith(1, 'service-id', SERVICE_ID);
-        expect(core.info).toBeCalledWith(`Service ${SERVICE_ID} has started creation. Watch for creation progress in AppRunner console`);
+
+        expect(setFailedMock).not.toHaveBeenCalled();
+        expect(setOutputMock).toHaveBeenNthCalledWith(1, 'service-id', SERVICE_ID);
+        expect(infoMock).toBeCalledWith(`Service ${SERVICE_ID} has started creation. Watch for creation progress in AppRunner console`);
     });
 
     test('register app runner using docker registry configuration', async () => {
-        core.getInput = jest
-            .fn()
-            .mockReturnValueOnce(SERVICE_NAME)
-            .mockReturnValueOnce(null)
-            .mockReturnValueOnce(ACCESS_ROLE_ARN)
-            .mockReturnValueOnce(null)
-            .mockReturnValueOnce(DOCKER_IMAGE);
-        mockSendDef.mockImplementationOnce(() => {
-            return {
-                NextToken: null
-            }
+        const inputConfig: FakeInput = {
+            service: SERVICE_NAME,
+            "access-role-arn": ACCESS_ROLE_ARN,
+            image: DOCKER_IMAGE,
+        };
+
+        getInputMock.mockImplementation((name) => {
+            return getFakeInput(inputConfig, name);
         });
-        mockSendDef.mockImplementationOnce(() => {
-            return {
-                Service: {
-                    ServiceId: SERVICE_ID
-                }
-            }
+
+        const sendConfig: ICommandConfig = {
+            listServicesCommand: [{ NextToken: undefined, ServiceSummaryList: [] }],
+            createServiceCommand: [{ Service: { ServiceId: SERVICE_ID } }],
+        }
+        mockSendDef.mockImplementation((command) => {
+            return getFakeCommandOutput(sendConfig, command.input, commandLog);
         });
+
         await run();
-        expect(core.setFailed).toHaveBeenCalledTimes(0);
-        expect(core.setOutput).toHaveBeenNthCalledWith(1, 'service-id', SERVICE_ID);
-        expect(core.info).toBeCalledWith(`Service ${SERVICE_ID} has started creation. Watch for creation progress in AppRunner console`);
+
+        expect(setFailedMock).not.toHaveBeenCalled();
+        expect(setOutputMock).toHaveBeenNthCalledWith(1, 'service-id', SERVICE_ID);
+        expect(infoMock).toBeCalledWith(`Service ${SERVICE_ID} has started creation. Watch for creation progress in AppRunner console`);
     });
 
     test('update app runner', async () => {
-        core.getInput = jest
-            .fn()
-            .mockReturnValueOnce(SERVICE_NAME)
-            .mockReturnValueOnce(null)
-            .mockReturnValueOnce(ACCESS_ROLE_ARN)
-            .mockReturnValueOnce(null)
-            .mockReturnValueOnce(DOCKER_IMAGE);
-        mockSendDef.mockImplementationOnce(() => {
-            return {
-                NextToken: null,
-                ServiceSummaryList: [
-                    {
-                        ServiceName: SERVICE_NAME,
-                        ServiceArn: SERVICE_ARN
-                    }
-                ]
-            }
+        const inputConfig: FakeInput = {
+            service: SERVICE_NAME,
+            "access-role-arn": ACCESS_ROLE_ARN,
+            image: DOCKER_IMAGE,
+        };
+
+        getInputMock.mockImplementation((name) => {
+            return getFakeInput(inputConfig, name);
         });
-        mockSendDef.mockImplementationOnce(() => {
-            return {
-                Service: {
-                    ServiceId: SERVICE_ID
-                }
-            }
+
+        const sendConfig: ICommandConfig = {
+            listServicesCommand: [{
+                NextToken: undefined,
+                ServiceSummaryList: [{
+                    ServiceName: SERVICE_NAME,
+                    ServiceArn: SERVICE_ARN,
+                }]
+            }],
+            updateServiceCommand: [{ Service: { ServiceId: SERVICE_ID } }],
+        }
+        mockSendDef.mockImplementation((command) => {
+            return getFakeCommandOutput(sendConfig, command.input, commandLog);
         });
+
         await run();
-        expect(core.setFailed).toHaveBeenCalledTimes(0);
-        expect(core.setOutput).toHaveBeenNthCalledWith(1, 'service-id', SERVICE_ID);
-        expect(core.info).toBeCalledWith(`Service ${SERVICE_ID} has started creation. Watch for creation progress in AppRunner console`);
+
+        expect(setFailedMock).not.toHaveBeenCalled();
+        expect(setOutputMock).toHaveBeenNthCalledWith(1, 'service-id', SERVICE_ID);
+        expect(infoMock).toBeCalledWith(`Service ${SERVICE_ID} has started creation. Watch for creation progress in AppRunner console`);
     });
 
     test('update app runner with pagination', async () => {
-        core.getInput = jest
-            .fn()
-            .mockReturnValueOnce(SERVICE_NAME)
-            .mockReturnValueOnce(null)
-            .mockReturnValueOnce(ACCESS_ROLE_ARN)
-            .mockReturnValueOnce(null)
-            .mockReturnValueOnce(DOCKER_IMAGE);
-        mockSendDef.mockImplementationOnce(() => {
-            return {
-                NextToken: "NextToken"
-            }
+        const inputConfig: FakeInput = {
+            service: SERVICE_NAME,
+            "access-role-arn": ACCESS_ROLE_ARN,
+            image: DOCKER_IMAGE,
+        };
+
+        getInputMock.mockImplementation((name) => {
+            return getFakeInput(inputConfig, name);
         });
-        mockSendDef.mockImplementationOnce(() => {
-            return {
-                NextToken: null,
-                ServiceSummaryList: [
-                    {
-                        ServiceName: SERVICE_NAME,
-                        ServiceArn: SERVICE_ARN
-                    }
-                ]
-            }
+
+        const sendConfig: ICommandConfig = {
+            listServicesCommand: [{
+                NextToken: 'NextToken',
+            }, {
+                NextToken: undefined,
+                ServiceSummaryList: [{
+                    ServiceName: SERVICE_NAME,
+                    ServiceArn: SERVICE_ARN,
+                }]
+            }],
+            updateServiceCommand: [{ Service: { ServiceId: SERVICE_ID } }],
+        }
+        mockSendDef.mockImplementation((command) => {
+            return getFakeCommandOutput(sendConfig, command.input, commandLog);
         });
-        mockSendDef.mockImplementationOnce(() => {
-            return {
-                Service: {
-                    ServiceId: SERVICE_ID
-                }
-            }
-        });
+
         await run();
-        expect(core.setFailed).toHaveBeenCalledTimes(0);
-        expect(core.setOutput).toHaveBeenNthCalledWith(1, 'service-id', SERVICE_ID);
-        expect(core.info).toBeCalledWith(`Service ${SERVICE_ID} has started creation. Watch for creation progress in AppRunner console`);
+
+        expect(setFailedMock).not.toHaveBeenCalled();
+        expect(setOutputMock).toHaveBeenNthCalledWith(1, 'service-id', SERVICE_ID);
+        expect(infoMock).toBeCalledWith(`Service ${SERVICE_ID} has started creation. Watch for creation progress in AppRunner console`);
     });
 
     test('register app and wait for stable state', async () => {
-        core.getInput = jest
-            .fn()
-            .mockReturnValueOnce(SERVICE_NAME)
-            .mockReturnValueOnce(SOURCE_ARN_CONNECTION)
-            .mockReturnValueOnce(ACCESS_ROLE_ARN)
-            .mockReturnValueOnce(REPO)
-            .mockReturnValueOnce(null)
-            .mockReturnValueOnce(RUNTIME)
-            .mockReturnValueOnce(BUILD_COMMAND)
-            .mockReturnValueOnce(START_COMMAND)
-            .mockReturnValueOnce(PORT)
-            .mockReturnValueOnce('true');
-        mockSendDef.mockImplementationOnce(() => {
-            return {
-                NextToken: null
-            }
+        const inputConfig: FakeInput = {
+            service: SERVICE_NAME,
+            "source-connection-arn": SOURCE_ARN_CONNECTION,
+            "access-role-arn": ACCESS_ROLE_ARN,
+            repo: REPO,
+            runtime: RUNTIME,
+            "build-command": BUILD_COMMAND,
+            "start-command": START_COMMAND,
+            port: PORT,
+            "wait-for-service-stability": 'true',
+        };
+        getInputMock.mockImplementation((name) => {
+            return getFakeInput(inputConfig, name);
         });
-        mockSendDef.mockImplementationOnce(() => {
-            return {
-                Service: {
-                    ServiceId: SERVICE_ID,
-                    ServiceArn: SERVICE_ARN
-                }
-            }
-        });
-        mockSendDef.mockImplementationOnce(() => {
-            return {
-                Service: {
-                    Status: "CREATION_COMPLETE"
-                }
-            }
+
+        const sendConfig: ICommandConfig = {
+            listServicesCommand: [{ NextToken: undefined, ServiceSummaryList: [] }],
+            createServiceCommand: [{ Service: { ServiceId: SERVICE_ID, ServiceArn: SERVICE_ARN, } }],
+            describeServiceCommand: [{ Service: { Status: "CREATION_COMPLETE" } }],
+        };
+        mockSendDef.mockImplementation((command) => {
+            return getFakeCommandOutput(sendConfig, command.input, commandLog);
         });
 
         await run();
-        expect(core.setFailed).toHaveBeenCalledTimes(0);
-        expect(core.setOutput).toHaveBeenNthCalledWith(1, 'service-id', SERVICE_ID);
-        expect(core.info).toBeCalledWith(`Waiting for the service ${SERVICE_ID} to reach stable state`);
-        expect(core.info).toBeCalledWith(`Service ${SERVICE_ID} has reached the stable state CREATION_COMPLETE`);
+
+        expect(setFailedMock).not.toHaveBeenCalled();
+        expect(setOutputMock).toHaveBeenNthCalledWith(1, 'service-id', SERVICE_ID);
+        expect(infoMock).toBeCalledWith(`Waiting for the service ${SERVICE_ID} to reach stable state`);
+        expect(infoMock).toBeCalledWith(`Service ${SERVICE_ID} has reached the stable state CREATION_COMPLETE`);
     });
 
     test('Validation - Service name empty', async () => {
-        core.getInput = jest
-            .fn()
-            .mockReturnValueOnce(SERVICE_NAME)
-            .mockReturnValueOnce(SOURCE_ARN_CONNECTION)
-            .mockReturnValueOnce(ACCESS_ROLE_ARN)
-            .mockReturnValueOnce(REPO)
-            .mockReturnValueOnce(DOCKER_IMAGE)
+        const inputConfig: FakeInput = {
+            service: SERVICE_NAME,
+            "source-connection-arn": SOURCE_ARN_CONNECTION,
+            "access-role-arn": ACCESS_ROLE_ARN,
+            repo: REPO,
+            image: DOCKER_IMAGE,
+        };
+
+        getInputMock.mockImplementation((name) => {
+            return getFakeInput(inputConfig, name);
+        });
 
         await run();
-        expect(core.setFailed).toHaveBeenCalledTimes(1);
+
+        expect(setFailedMock).toHaveBeenCalledTimes(1);
     });
 
     test('Validation - Docker and source code configuration', async () => {
-        core.getInput = jest
-            .fn()
-            .mockReturnValueOnce(null)
+        getInputMock.mockImplementation((name) => {
+            return getFakeInput({}, name);
+        });
 
         await run();
-        expect(core.setFailed).toHaveBeenCalledTimes(1);
+
+        expect(setFailedMock).toHaveBeenCalledTimes(1);
     });
 
     test('Validation - Source code missing validation', async () => {
-        core.getInput = jest
-            .fn()
-            .mockReturnValueOnce(SERVICE_NAME)
-            .mockReturnValueOnce(SOURCE_ARN_CONNECTION)
-            .mockReturnValueOnce(ACCESS_ROLE_ARN)
-            .mockReturnValueOnce(REPO)
-            .mockReturnValueOnce(null)
-            .mockReturnValueOnce(RUNTIME)
-            .mockReturnValueOnce(BUILD_COMMAND)
-            .mockReturnValueOnce(null)
-            .mockReturnValueOnce(PORT)
-            .mockReturnValueOnce('true');
+        const inputConfig: FakeInput = {
+            service: SERVICE_NAME,
+            "source-connection-arn": SOURCE_ARN_CONNECTION,
+            "access-role-arn": ACCESS_ROLE_ARN,
+            repo: REPO,
+            runtime: RUNTIME,
+            "build-command": BUILD_COMMAND,
+            port: PORT,
+            "wait-for-service-stability": 'true',
+        };
+
+        getInputMock.mockImplementation((name) => {
+            return getFakeInput(inputConfig, name);
+        });
 
         await run();
-        expect(core.setFailed).toHaveBeenCalledTimes(1);
+
+        expect(setFailedMock).toHaveBeenCalledTimes(1);
     });
 
     test('Validation - Invalid runtime', async () => {
-        core.getInput = jest
-            .fn()
-            .mockReturnValueOnce(SERVICE_NAME)
-            .mockReturnValueOnce(SOURCE_ARN_CONNECTION)
-            .mockReturnValueOnce(ACCESS_ROLE_ARN)
-            .mockReturnValueOnce(REPO)
-            .mockReturnValueOnce(null)
-            .mockReturnValueOnce("RUNTIME")
-            .mockReturnValueOnce(BUILD_COMMAND)
-            .mockReturnValueOnce(START_COMMAND)
-            .mockReturnValueOnce(PORT)
-            .mockReturnValueOnce('true');
+        const inputConfig: FakeInput = {
+            service: SERVICE_NAME,
+            "source-connection-arn": SOURCE_ARN_CONNECTION,
+            "access-role-arn": ACCESS_ROLE_ARN,
+            repo: REPO,
+            runtime: "RUNTIME",
+            "build-command": BUILD_COMMAND,
+            "start-command": START_COMMAND,
+            port: PORT,
+            "wait-for-service-stability": 'true',
+        };
+
+        getInputMock.mockImplementation((name) => {
+            return getFakeInput(inputConfig, name);
+        });
 
         await run();
-        expect(core.setFailed).toHaveBeenCalledTimes(1);
+
+        expect(setFailedMock).toHaveBeenCalledTimes(1);
     });
 
     test('Validation - IAM Role missing', async () => {
-        core.getInput = jest
-            .fn()
-            .mockReturnValueOnce(SERVICE_NAME)
-            .mockReturnValueOnce(null)
-            .mockReturnValueOnce(null)
-            .mockReturnValueOnce(null)
-            .mockReturnValueOnce(DOCKER_IMAGE)
+        const inputConfig: FakeInput = {
+            service: SERVICE_NAME,
+            image: DOCKER_IMAGE,
+        };
+
+        getInputMock.mockImplementation((name) => {
+            return getFakeInput(inputConfig, name);
+        });
 
         await run();
-        expect(core.setFailed).toHaveBeenCalledTimes(1);
+
+        expect(setFailedMock).toHaveBeenCalledTimes(1);
     });
 
     test('register app runner with branch configuration', async () => {
-        core.getInput = jest
-            .fn()
-            .mockReturnValueOnce(SERVICE_NAME)
-            .mockReturnValueOnce(SOURCE_ARN_CONNECTION)
-            .mockReturnValueOnce(ACCESS_ROLE_ARN)
-            .mockReturnValueOnce(REPO)
-            .mockReturnValueOnce(null)
-            .mockReturnValueOnce(RUNTIME)
-            .mockReturnValueOnce(BUILD_COMMAND)
-            .mockReturnValueOnce(START_COMMAND)
-            .mockReturnValueOnce(PORT)
-            .mockReturnValueOnce('true')
-            .mockReturnValueOnce('us-east-1')
-            .mockReturnValueOnce('refs/head/master')
+        const inputConfig: FakeInput = {
+            service: SERVICE_NAME,
+            "source-connection-arn": SOURCE_ARN_CONNECTION,
+            "access-role-arn": ACCESS_ROLE_ARN,
+            repo: REPO,
+            runtime: RUNTIME,
+            "build-command": BUILD_COMMAND,
+            "start-command": START_COMMAND,
+            port: PORT,
+            region: 'us-east-1',
+            branch: 'refs/head/master',
+        };
+
+        getInputMock.mockImplementation((name) => {
+            return getFakeInput(inputConfig, name);
+        });
+
+        const sendConfig: ICommandConfig = {
+            listServicesCommand: [{ NextToken: undefined, ServiceSummaryList: [] }],
+            createServiceCommand: [{ Service: { ServiceId: SERVICE_ID } }],
+        }
+        mockSendDef.mockImplementation((command) => {
+            return getFakeCommandOutput(sendConfig, command.input, commandLog);
+        });
+
         await run();
-        expect(core.setFailed).toHaveBeenCalledTimes(1);
+
+        expect(setFailedMock).not.toHaveBeenCalled();
+        expect(setOutputMock).toHaveBeenNthCalledWith(1, 'service-id', SERVICE_ID);
+        expect(infoMock).toBeCalledWith(`Service ${SERVICE_ID} has started creation. Watch for creation progress in AppRunner console`);
     });
 });

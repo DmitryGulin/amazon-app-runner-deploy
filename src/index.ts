@@ -1,8 +1,9 @@
 
-import { getInput } from "@actions/core";
+import { getInput, info, setFailed, setOutput } from "@actions/core";
 import { AppRunnerClient, CreateServiceCommand, ListServicesCommand, ListServicesCommandOutput, UpdateServiceCommand, DescribeServiceCommand, ImageRepositoryType } from "@aws-sdk/client-apprunner";
+import { debug } from '@actions/core';
 
-const supportedRuntime = [ 'NODEJS_12', 'PYTHON_3' ];
+const supportedRuntime = ['NODEJS_12', 'PYTHON_3'];
 
 const OPERATION_IN_PROGRESS = "OPERATION_IN_PROGRESS";
 const MAX_ATTEMPTS = 120;
@@ -19,7 +20,7 @@ function getImageType(imageUri: string) {
 
 function getInputInt(name: string, defaultValue: number): number {
     const val = getInput(name, { required: false });
-    if(!val) {
+    if (!val) {
         return defaultValue;
     }
 
@@ -40,31 +41,29 @@ async function getServiceArn(client: AppRunnerClient, serviceName: string): Prom
         );
         nextToken = listServiceResponse.NextToken;
 
-        if(!listServiceResponse.ServiceSummaryList) {
-            return undefined;
-        }
-
-        for (const service of listServiceResponse.ServiceSummaryList) {
-            if (service.ServiceName === serviceName) {
-                return service.ServiceArn
+        if (listServiceResponse.ServiceSummaryList) {
+            for (const service of listServiceResponse.ServiceSummaryList) {
+                if (service.ServiceName === serviceName) {
+                    return service.ServiceArn
+                }
             }
         }
-    } while(nextToken)
+    } while (nextToken)
 
     return undefined;
 }
 
 export async function run(): Promise<void> {
-    const serviceName = getInput('service', {required: true});
-    const sourceConnectionArn = getInput('source-connection-arn', {required: false});
-    const accessRoleArn = getInput('access-role-arn', {required: false});
-    const repoUrl = getInput('repo', {required: false});
-    const imageUri = getInput('image', {required: false});
-    const runtime = getInput('runtime', {required: true});
-    const buildCommand = getInput('build-command', {required: false});
-    const startCommand = getInput('start-command', {required: false});
+    const serviceName = getInput('service', { required: true });
+    const sourceConnectionArn = getInput('source-connection-arn', { required: false });
+    const accessRoleArn = getInput('access-role-arn', { required: false });
+    const repoUrl = getInput('repo', { required: false });
+    const imageUri = getInput('image', { required: false });
+    const runtime = getInput('runtime', { required: true });
+    const buildCommand = getInput('build-command', { required: false });
+    const startCommand = getInput('start-command', { required: false });
     const port = getInputInt('port', 80);
-    const waitForService = getInput('wait-for-service-stability', {required: false}) || "false";
+    const waitForService = getInput('wait-for-service-stability', { required: false }) || "false";
 
     try {
         // Check for service type
@@ -97,10 +96,10 @@ export async function run(): Promise<void> {
 
         // Defaults
         // Region - us-east-1
-        const region = getInput('region', {required: false}) || 'us-east-1';
+        const region = getInput('region', { required: false }) || 'us-east-1';
 
         // Branch - master
-        let branch = getInput('branch', {required: false}) || 'master';
+        let branch = getInput('branch', { required: false }) || 'master';
 
         // Get branch details from refs
         if (branch.startsWith("refs/")) {
@@ -114,7 +113,7 @@ export async function run(): Promise<void> {
         const memory = getInputInt('memory', 3);
 
         // AppRunner client
-        const client = new AppRunnerClient({region: region});
+        const client = new AppRunnerClient({ region: region });
 
         // Check whether service exists and get ServiceArn
         let serviceArn = await getServiceArn(client, serviceName);
@@ -122,7 +121,7 @@ export async function run(): Promise<void> {
         // New service or update to existing service
         let serviceId: string | undefined = undefined;
         if (!serviceArn) {
-            core.info(`Creating service ${serviceName}`);
+            info(`Creating service ${serviceName}`);
             const command = new CreateServiceCommand({
                 ServiceName: serviceName,
                 InstanceConfiguration: {
@@ -169,10 +168,10 @@ export async function run(): Promise<void> {
             }
             const createServiceResponse = await client.send(command);
             serviceId = createServiceResponse.Service?.ServiceId;
-            core.info(`Service creation initiated with service ID - ${serviceId}`)
+            info(`Service creation initiated with service ID - ${serviceId}`)
             serviceArn = createServiceResponse.Service?.ServiceArn;
         } else {
-            core.info(`Updating existing service ${serviceName}`);
+            info(`Updating existing service ${serviceName}`);
             if (isImageBased) {
                 // Update only in case of docker registry based service
                 const updateServiceResponse = await client.send(new UpdateServiceCommand({
@@ -189,19 +188,19 @@ export async function run(): Promise<void> {
                 }));
 
                 serviceId = updateServiceResponse.Service?.ServiceId;
-                core.info(`Service update initiated with operation ID - ${serviceId}`);
+                info(`Service update initiated with operation ID - ${serviceId}`);
                 serviceArn = updateServiceResponse.Service?.ServiceArn;
             }
         }
 
         // Set output
-        core.setOutput('service-id', serviceId);
+        setOutput('service-id', serviceId);
 
         // Wait for service to be stable (if required)
         if (waitForService === "true") {
             let attempts = 0;
             let status = OPERATION_IN_PROGRESS;
-            core.info(`Waiting for the service ${serviceId} to reach stable state`);
+            info(`Waiting for the service ${serviceId} to reach stable state`);
             while (status === OPERATION_IN_PROGRESS && attempts < MAX_ATTEMPTS) {
                 const describeServiceResponse = await client.send(new DescribeServiceCommand({
                     ServiceArn: serviceArn
@@ -220,12 +219,12 @@ export async function run(): Promise<void> {
             if (attempts >= MAX_ATTEMPTS)
                 throw new Error(`Service did not reach stable state after ${attempts} attempts`);
             else
-                core.info(`Service ${serviceId} has reached the stable state ${status}`);
-        }else{
-            core.info(`Service ${serviceId} has started creation. Watch for creation progress in AppRunner console`);
+                info(`Service ${serviceId} has reached the stable state ${status}`);
+        } else {
+            info(`Service ${serviceId} has started creation. Watch for creation progress in AppRunner console`);
         }
     } catch (error) {
-        core.setFailed(error.message);
-        core.debug(error.stack);
+        setFailed(error.message);
+        debug(error.stack);
     }
 }
