@@ -7,7 +7,7 @@
   "scripts": {
     "lint": "eslint ./src/*.ts",
     "package": "node ./esbuild.config.mjs",
-    "test": "jest"
+    "test": "npm run lint && jest --coverage"
   },
   "repository": {
     "type": "git",
