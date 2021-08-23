@@ -3,7 +3,6 @@
   "version": "1.4.7",
   "description": "Registers and deploys the application as AppRunner service.",
   "main": "./dist/index.js",
-  "type": "module",
   "scripts": {
     "lint": "eslint ./src/*.ts",
     "package": "node ./esbuild.config.mjs",
